@@ -127,13 +127,15 @@ class GitHubStarMonitor(Star):
                         continue
                     repo_key = f"{owner}/{repo}"
                     last_stars = self.last_star_counts.get(repo_key)
-                    
-                    if last_stars is not None and current_stars != last_stars:
+                      if last_stars is not None and current_stars != last_stars:
                         # 星标数量发生变化
                         change = current_stars - last_stars
                         
                         # 立即更新记录，防止重复通知
                         self.last_star_counts[repo_key] = current_stars
+                        
+                        # 检查是否达到1万star里程碑
+                        is_milestone = await self.check_milestone_reached(last_stars, current_stars)
                         
                         # 获取导致此次变动的具体用户
                         change_users = await self.get_star_change_users(owner, repo, change)
@@ -142,7 +144,19 @@ class GitHubStarMonitor(Star):
                         enable_image = self.config.get("enable_image_notification", True)
                         github_token = self.config.get("github_token", "").strip()
                         
-                        if enable_image and github_token:
+                        if is_milestone and enable_image and github_token:
+                            # 创建特殊的庆祝图片
+                            image_path = await self.create_milestone_celebration_image(
+                                repo_key, current_stars, change_users
+                            )
+                            
+                            if image_path:
+                                # 发送庆祝图片通知
+                                await self.send_image_notification(target_sessions, image_path)
+                            else:
+                                # 图片生成失败，发送庆祝文本通知
+                                await self.send_milestone_text_notification(target_sessions, repo_key, current_stars, change_users)
+                        elif enable_image and github_token:
                             # 创建通知图片
                             image_path = await self.create_star_notification_image(
                                 repo_key, change, current_stars, change_users
@@ -156,7 +170,10 @@ class GitHubStarMonitor(Star):
                                 await self.send_text_notification_with_users(target_sessions, repo_key, change, current_stars, change_users)
                         else:
                             # 发送文本通知
-                            await self.send_text_notification_with_users(target_sessions, repo_key, change, current_stars, change_users)
+                            if is_milestone:
+                                await self.send_milestone_text_notification(target_sessions, repo_key, current_stars, change_users)
+                            else:
+                                await self.send_text_notification_with_users(target_sessions, repo_key, change, current_stars, change_users)
                         
                         logger.info(f"GitHub Star Monitor: 检测到 {repo_key} 星标变动: {last_stars} -> {current_stars}")
                     else:
@@ -404,9 +421,7 @@ class GitHubStarMonitor(Star):
                         return base64.b64encode(avatar_data).decode('utf-8')
         except Exception as e:
             logger.error(f"GitHub Star Monitor: 下载头像失败: {e}")
-        return None
-
-    async def create_star_notification_image(self, repo_key: str, change: int, current_stars: int, star_events: List[dict]) -> str:
+        return None    async def create_star_notification_image(self, repo_key: str, change: int, current_stars: int, star_events: List[dict]) -> str:
         """创建星标变动通知图片 - 使用HTML渲染"""
         try:
             # 准备用户数据
@@ -587,7 +602,336 @@ class GitHubStarMonitor(Star):
             
         except Exception as e:
             logger.error(f"GitHub Star Monitor: 创建通知图片失败: {e}")
-            return ""      
+            return ""
+
+    async def create_milestone_celebration_image(self, repo_key: str, current_stars: int, star_events: List[dict]) -> str:
+        """创建1万star里程碑庆祝图片"""
+        try:
+            # 准备第1万个star用户数据
+            milestone_user_html = ""
+            if star_events and len(star_events) > 0:
+                event = star_events[0]  # 获取第一个用户（第1万个star）
+                user = event.get('actor', {})
+                username = user.get('login', '未知用户')
+                avatar_url = user.get('avatar_url', '')
+                
+                # 下载头像并转换为base64
+                avatar_base64 = ""
+                if avatar_url:
+                    avatar_data = await self.download_avatar_base64(avatar_url)
+                    if avatar_data:
+                        avatar_base64 = f"data:image/png;base64,{avatar_data}"
+                
+                milestone_user_html = f"""
+                <div class="milestone-user">
+                    <div class="milestone-avatar-container">
+                        <img class="milestone-avatar" src="{avatar_base64 or 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODAiIGhlaWdodD0iODAiIHZpZXdCb3g9IjAgMCA4MCA4MCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPGNpcmNsZSBjeD0iNDAiIGN5PSI0MCIgcj0iNDAiIGZpbGw9IiNEREREREQiLz4KPHN2ZyB4PSIyNSIgeT0iMjUiIHdpZHRoPSIzMCIgaGVpZ2h0PSIzMCIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSIjOTk5OTk5Ij4KPHA+VXNlcjwvcD4KPHN2Zz4KPC9zdmc+'}" alt="milestone user avatar" />
+                        <div class="crown">👑</div>
+                    </div>
+                    <div class="milestone-user-info">
+                        <div class="milestone-username">@{username}</div>
+                        <div class="milestone-label">第10,000个Star！</div>
+                    </div>
+                </div>
+                """
+            
+            # 创建庆祝HTML模板
+            html_template = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="UTF-8">
+                <style>
+                    @import url('https://fonts.googleapis.com/css2?family=Fredoka+One:wght@400&display=swap');
+                    
+                    body {{
+                        margin: 0;
+                        padding: 40px;
+                        font-family: 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+                        background: linear-gradient(135deg, #ff6b6b 0%, #ffd93d 25%, #6bcf7f 50%, #4d79ff 75%, #ff6b6b 100%);
+                        background-size: 400% 400%;
+                        animation: celebration-bg 4s ease infinite;
+                        min-height: 600px;
+                        box-sizing: border-box;
+                        position: relative;
+                    }}
+                    
+                    @keyframes celebration-bg {{
+                        0% {{ background-position: 0% 50%; }}
+                        50% {{ background-position: 100% 50%; }}
+                        100% {{ background-position: 0% 50%; }}
+                    }}
+                    
+                    .fireworks {{
+                        position: absolute;
+                        top: 0;
+                        left: 0;
+                        width: 100%;
+                        height: 100%;
+                        pointer-events: none;
+                        overflow: hidden;
+                    }}
+                    
+                    .firework {{
+                        position: absolute;
+                        width: 4px;
+                        height: 4px;
+                        border-radius: 50%;
+                        animation: firework-explode 2s ease-out infinite;
+                    }}
+                    
+                    .firework:nth-child(1) {{ top: 20%; left: 15%; background: #ff6b6b; animation-delay: 0s; }}
+                    .firework:nth-child(2) {{ top: 30%; left: 85%; background: #ffd93d; animation-delay: 0.5s; }}
+                    .firework:nth-child(3) {{ top: 60%; left: 25%; background: #6bcf7f; animation-delay: 1s; }}
+                    .firework:nth-child(4) {{ top: 50%; left: 75%; background: #4d79ff; animation-delay: 1.5s; }}
+                    
+                    @keyframes firework-explode {{
+                        0% {{ transform: scale(0); opacity: 1; }}
+                        50% {{ transform: scale(20); opacity: 0.8; }}
+                        100% {{ transform: scale(40); opacity: 0; }}
+                    }}
+                    
+                    .container {{
+                        background: rgba(255, 255, 255, 0.95);
+                        border-radius: 25px;
+                        padding: 50px;
+                        box-shadow: 0 30px 80px rgba(0,0,0,0.15);
+                        max-width: 800px;
+                        margin: 0 auto;
+                        text-align: center;
+                        position: relative;
+                        backdrop-filter: blur(10px);
+                    }}
+                    
+                    .celebration-title {{
+                        font-family: 'Fredoka One', cursive;
+                        font-size: 48px;
+                        font-weight: bold;
+                        background: linear-gradient(45deg, #ff6b6b, #ffd93d, #6bcf7f, #4d79ff);
+                        background-size: 300% 300%;
+                        background-clip: text;
+                        -webkit-background-clip: text;
+                        -webkit-text-fill-color: transparent;
+                        animation: celebration-text 3s ease infinite;
+                        margin-bottom: 20px;
+                        text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+                    }}
+                    
+                    @keyframes celebration-text {{
+                        0% {{ background-position: 0% 50%; }}
+                        50% {{ background-position: 100% 50%; }}
+                        100% {{ background-position: 0% 50%; }}
+                    }}
+                    
+                    .celebration-subtitle {{
+                        font-size: 24px;
+                        color: #2c3e50;
+                        margin-bottom: 40px;
+                        font-weight: 600;
+                    }}
+                    
+                    .milestone-info {{
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        border-radius: 20px;
+                        padding: 30px;
+                        margin-bottom: 40px;
+                        color: white;
+                        position: relative;
+                        overflow: hidden;
+                    }}
+                    
+                    .milestone-info::before {{
+                        content: '';
+                        position: absolute;
+                        top: -50%;
+                        left: -50%;
+                        width: 200%;
+                        height: 200%;
+                        background: repeating-linear-gradient(
+                            45deg,
+                            transparent,
+                            transparent 10px,
+                            rgba(255,255,255,0.1) 10px,
+                            rgba(255,255,255,0.1) 20px
+                        );
+                        animation: shine 3s linear infinite;
+                    }}
+                    
+                    @keyframes shine {{
+                        0% {{ transform: translateX(-100%) translateY(-100%); }}
+                        100% {{ transform: translateX(100%) translateY(100%); }}
+                    }}
+                    
+                    .repo-name {{
+                        font-size: 32px;
+                        font-weight: bold;
+                        margin-bottom: 15px;
+                        position: relative;
+                        z-index: 1;
+                    }}
+                    
+                    .milestone-stars {{
+                        font-size: 42px;
+                        font-weight: bold;
+                        margin-bottom: 10px;
+                        position: relative;
+                        z-index: 1;
+                        text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+                    }}
+                    
+                    .milestone-message {{
+                        font-size: 18px;
+                        position: relative;
+                        z-index: 1;
+                    }}
+                    
+                    .milestone-user {{
+                        background: linear-gradient(135deg, #ffd93d 0%, #ff6b6b 100%);
+                        border-radius: 20px;
+                        padding: 30px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        gap: 25px;
+                        margin-bottom: 30px;
+                        box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+                    }}
+                    
+                    .milestone-avatar-container {{
+                        position: relative;
+                    }}
+                    
+                    .milestone-avatar {{
+                        width: 80px;
+                        height: 80px;
+                        border-radius: 50%;
+                        border: 4px solid white;
+                        object-fit: cover;
+                        box-shadow: 0 8px 25px rgba(0,0,0,0.2);
+                    }}
+                    
+                    .crown {{
+                        position: absolute;
+                        top: -15px;
+                        right: -10px;
+                        font-size: 24px;
+                        animation: crown-bounce 2s ease infinite;
+                    }}
+                    
+                    @keyframes crown-bounce {{
+                        0%, 100% {{ transform: translateY(0) rotate(0deg); }}
+                        50% {{ transform: translateY(-5px) rotate(10deg); }}
+                    }}
+                    
+                    .milestone-user-info {{
+                        text-align: left;
+                    }}
+                    
+                    .milestone-username {{
+                        font-size: 24px;
+                        font-weight: bold;
+                        color: white;
+                        margin-bottom: 5px;
+                        text-shadow: 1px 1px 2px rgba(0,0,0,0.3);
+                    }}
+                    
+                    .milestone-label {{
+                        font-size: 16px;
+                        color: rgba(255,255,255,0.9);
+                        font-weight: 600;
+                    }}
+                    
+                    .celebration-footer {{
+                        font-size: 18px;
+                        color: #2c3e50;
+                        font-weight: 600;
+                        margin-top: 20px;
+                    }}
+                    
+                    .emoji-rain {{
+                        position: absolute;
+                        top: 0;
+                        left: 0;
+                        width: 100%;
+                        height: 100%;
+                        pointer-events: none;
+                        overflow: hidden;
+                    }}
+                    
+                    .emoji {{
+                        position: absolute;
+                        font-size: 20px;
+                        animation: fall 3s linear infinite;
+                    }}
+                    
+                    .emoji:nth-child(1) {{ left: 10%; animation-delay: 0s; }}
+                    .emoji:nth-child(2) {{ left: 20%; animation-delay: 0.5s; }}
+                    .emoji:nth-child(3) {{ left: 30%; animation-delay: 1s; }}
+                    .emoji:nth-child(4) {{ left: 40%; animation-delay: 1.5s; }}
+                    .emoji:nth-child(5) {{ left: 50%; animation-delay: 2s; }}
+                    .emoji:nth-child(6) {{ left: 60%; animation-delay: 2.5s; }}
+                    .emoji:nth-child(7) {{ left: 70%; animation-delay: 0.3s; }}
+                    .emoji:nth-child(8) {{ left: 80%; animation-delay: 0.8s; }}
+                    .emoji:nth-child(9) {{ left: 90%; animation-delay: 1.3s; }}
+                    
+                    @keyframes fall {{
+                        0% {{ transform: translateY(-100px) rotate(0deg); opacity: 1; }}
+                        100% {{ transform: translateY(calc(100vh + 100px)) rotate(360deg); opacity: 0; }}
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="fireworks">
+                    <div class="firework"></div>
+                    <div class="firework"></div>
+                    <div class="firework"></div>
+                    <div class="firework"></div>
+                </div>
+                
+                <div class="emoji-rain">
+                    <div class="emoji">🎉</div>
+                    <div class="emoji">🎊</div>
+                    <div class="emoji">⭐</div>
+                    <div class="emoji">🏆</div>
+                    <div class="emoji">🎈</div>
+                    <div class="emoji">✨</div>
+                    <div class="emoji">🌟</div>
+                    <div class="emoji">🎁</div>
+                    <div class="emoji">🚀</div>
+                </div>
+                
+                <div class="container">
+                    <div class="celebration-title">
+                        🎉 恭喜达成里程碑！🎉
+                    </div>
+                    
+                    <div class="celebration-subtitle">
+                        GitHub仓库突破1万星标！
+                    </div>
+                    
+                    <div class="milestone-info">
+                        <div class="repo-name">🏆 {repo_key}</div>
+                        <div class="milestone-stars">⭐ {current_stars:,} Stars</div>
+                        <div class="milestone-message">这是一个重要的里程碑时刻！</div>
+                    </div>
+                    
+                    {milestone_user_html if milestone_user_html else ''}
+                    
+                    <div class="celebration-footer">
+                        🎈 让我们继续努力，迈向下一个里程碑！🚀
+                    </div>
+                </div>
+            </body>
+            </html>
+            """
+            
+            # 使用本地Playwright渲染HTML为图片
+            image_path = await self.render_html_to_image(html_template)
+            return image_path
+            
+        except Exception as e:
+            logger.error(f"GitHub Star Monitor: 创建庆祝图片失败: {e}")
+            return ""
     async def send_image_notification(self, target_sessions: list, image_path: str):
         """发送图片通知到目标会话"""
         class MessageChain:
@@ -627,8 +971,7 @@ class GitHubStarMonitor(Star):
         message += f"当前星标数: {current_stars}\n"
         message += f"仓库链接: https://github.com/{repo_key}"
         await self.send_notification(target_sessions, message)
-    
-    async def send_text_notification_with_users(self, target_sessions: list, repo_key: str, change: int, current_stars: int, change_users: List[dict]):
+      async def send_text_notification_with_users(self, target_sessions: list, repo_key: str, change: int, current_stars: int, change_users: List[dict]):
         """发送包含用户信息的文本通知"""
         change_text = f"+{change}" if change > 0 else str(change)
         action_text = "点了star" if change > 0 else "取消了star"
@@ -646,6 +989,31 @@ class GitHubStarMonitor(Star):
                 message += f"• @{username} {action_text}\n"
         
         message += f"\n🔗 仓库链接: https://github.com/{repo_key}"
+        await self.send_notification(target_sessions, message)
+
+    async def check_milestone_reached(self, last_stars: int, current_stars: int) -> bool:
+        """检查是否达到1万star里程碑"""
+        milestone = 10000
+        return last_stars < milestone <= current_stars
+
+    async def send_milestone_text_notification(self, target_sessions: list, repo_key: str, current_stars: int, change_users: List[dict]):
+        """发送里程碑庆祝文本通知"""
+        message = f"🎉🎊 恭喜！GitHub仓库达到1万star里程碑！🎊🎉\n\n"
+        message += f"🏆 仓库: {repo_key}\n"
+        message += f"⭐ 当前星标数: {current_stars:,}\n"
+        message += f"📈 这是一个重要的里程碑！\n"
+        
+        # 添加第1万个star用户信息
+        if change_users:
+            message += f"\n🌟 第1万个star来自:\n"
+            for event in change_users[:1]:  # 只显示第一个用户
+                user = event.get('actor', {})
+                username = user.get('login', '未知用户')
+                message += f"👤 @{username} - 感谢你的支持！\n"
+        
+        message += f"\n🔗 仓库链接: https://github.com/{repo_key}\n"
+        message += f"🎈 让我们继续努力，迈向下一个里程碑！"
+        
         await self.send_notification(target_sessions, message)
 
     async def render_html_to_image(self, html_content: str) -> str:
