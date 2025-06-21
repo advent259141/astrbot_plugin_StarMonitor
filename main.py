@@ -122,12 +122,12 @@ class GitHubStarMonitor(Star):
                     
                     owner, repo = repo_info
                     current_stars = await self.get_repo_stars(owner, repo)
-                    
-                    if current_stars is None:
+                      if current_stars is None:
                         continue
                     repo_key = f"{owner}/{repo}"
                     last_stars = self.last_star_counts.get(repo_key)
-                      if last_stars is not None and current_stars != last_stars:
+                    
+                    if last_stars is not None and current_stars != last_stars:
                         # 星标数量发生变化
                         change = current_stars - last_stars
                         
@@ -406,10 +406,10 @@ class GitHubStarMonitor(Star):
                         return star_events[:5]  # 返回最近5个star事件
                     else:
                         logger.warning(f"GitHub Star Monitor: 获取事件失败，状态码: {response.status}")
-                        return []
-        except Exception as e:
+                        return []        except Exception as e:
             logger.error(f"GitHub Star Monitor: 获取star事件失败: {e}")
-            return []    
+            return []
+    
     async def download_avatar_base64(self, avatar_url: str) -> Optional[str]:
         """下载用户头像并转换为base64"""
         try:
@@ -421,7 +421,9 @@ class GitHubStarMonitor(Star):
                         return base64.b64encode(avatar_data).decode('utf-8')
         except Exception as e:
             logger.error(f"GitHub Star Monitor: 下载头像失败: {e}")
-        return None    async def create_star_notification_image(self, repo_key: str, change: int, current_stars: int, star_events: List[dict]) -> str:
+        return None
+    
+    async def create_star_notification_image(self, repo_key: str, change: int, current_stars: int, star_events: List[dict]) -> str:
         """创建星标变动通知图片 - 使用HTML渲染"""
         try:
             # 准备用户数据
@@ -966,12 +968,12 @@ class GitHubStarMonitor(Star):
         """发送文本通知"""
         change_text = f"+{change}" if change > 0 else str(change)
         message = f"🌟 GitHub仓库星标变动提醒\n\n"
-        message += f"仓库: {repo_key}\n"
-        message += f"变动: {change_text}\n"
+        message += f"仓库: {repo_key}\n"        message += f"变动: {change_text}\n"
         message += f"当前星标数: {current_stars}\n"
         message += f"仓库链接: https://github.com/{repo_key}"
         await self.send_notification(target_sessions, message)
-      async def send_text_notification_with_users(self, target_sessions: list, repo_key: str, change: int, current_stars: int, change_users: List[dict]):
+    
+    async def send_text_notification_with_users(self, target_sessions: list, repo_key: str, change: int, current_stars: int, change_users: List[dict]):
         """发送包含用户信息的文本通知"""
         change_text = f"+{change}" if change > 0 else str(change)
         action_text = "点了star" if change > 0 else "取消了star"
@@ -980,7 +982,8 @@ class GitHubStarMonitor(Star):
         message += f"📁 仓库: {repo_key}\n"
         message += f"📊 变动: {change_text}\n"
         message += f"⭐ 当前星标数: {current_stars}\n"
-          # 添加导致变动的用户信息
+        
+        # 添加导致变动的用户信息
         if change_users:
             message += f"\n👤 导致此次变动的用户:\n"
             for i, event in enumerate(change_users):
