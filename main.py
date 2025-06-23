@@ -948,8 +948,7 @@ class GitHubStarMonitor(Star):
                 logger.info(f"GitHub Star Monitor: 已向会话 {session_id} 发送图片通知")
             except Exception as e:
                 logger.error(f"GitHub Star Monitor: 向会话 {session_id} 发送图片通知失败: {e}")
-        
-        # 清理临时图片文件
+          # 清理临时图片文件
         try:
             if os.path.exists(image_path):
                 os.remove(image_path)
@@ -961,6 +960,14 @@ class GitHubStarMonitor(Star):
         """插件卸载时调用"""
         if self.monitoring_task:
             self.monitoring_task.cancel()
+            try:
+                # 等待任务完全取消
+                await self.monitoring_task
+            except asyncio.CancelledError:
+                # 任务被取消是正常的
+                pass
+            except Exception as e:
+                logger.error(f"GitHub Star Monitor: 终止监控任务时出错: {e}")
         logger.info("GitHub Star Monitor: 插件已停止")
     
     async def send_text_notification(self, target_sessions: list, repo_key: str, change: int, current_stars: int):
