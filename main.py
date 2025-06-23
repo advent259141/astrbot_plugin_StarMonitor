@@ -21,8 +21,8 @@ class GitHubStarMonitor(Star):
         self.monitoring_task = None
         self.is_monitoring = False  # 添加监控状态标志
         
-        # 启动监控任务
-        asyncio.create_task(self.start_monitoring())
+
+        self.monitoring_task = asyncio.create_task(self.start_monitoring())
     async def start_monitoring(self):
         """启动监控任务"""
         try:
